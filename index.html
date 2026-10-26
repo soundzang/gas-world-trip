@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>기체 부피 세계여행</title>
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Gowun+Dodum&display=swap">
 <style>
@@ -668,49 +669,51 @@ const clampGoal=g=>Math.min(80,Math.max(10,Math.round(num(g)/10)*10||80));
 const fmt=ms=>{const s=Math.round(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
 const cleanCode=v=>String(v).toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,12);
 
-/* 계정 없이 쓰는 교실용 연결: 선생님 브라우저가 방(허브)이 되고, 학생 브라우저가 PeerJS(WebRTC)로 직접 붙어요.
-   학생은 자기 진행 상황을 선생님께 보내고, 선생님 화면이 모두의 목록을 학생들에게 다시 나눠 줘요. */
-const PFX='gasvol-';
-function peerRoom(code,isHost){
+/* 계정 없이 쓰는 교실용 연결: Firebase Realtime Database가 중계 서버예요.
+   rooms/<방코드>/host 에 선생님의 경주 상태, rooms/<방코드>/players/<id> 에 학생마다 진행 상황을 적고,
+   같은 방의 모두가 그 변화를 실시간으로 받아요. 학생 기록은 창을 닫으면 자동으로 지워져요. */
+const FIREBASE_DB_URL='https://gas-world-trip-default-rtdb.asia-southeast1.firebasedatabase.app';   // 선생님 Firebase 실시간 데이터베이스 주소 (예: https://○○○-default-rtdb.asia-southeast1.firebasedatabase.app)
+let fbDb=null;
+try{if(FIREBASE_DB_URL&&window.firebase){firebase.initializeApp({databaseURL:FIREBASE_DB_URL});fbDb=firebase.database();}}catch(e){fbDb=null;}
+function fbRoom(code,isHost){
   return new Promise((resolve,reject)=>{
-    const hs=[],list=new Map(),conns=new Map();
-    let mine={},latest=[],hostConn=null,done=false,closed=false;
-    const peer=new Peer(isHost?PFX+code:undefined,{debug:0});
+    const base=fbDb.ref('rooms/'+code),myId=isHost?'host':base.child('players').push().key;
+    const ref=isHost?base.child('host'):base.child('players/'+myId);
     const isObj=v=>v&&typeof v==='object'&&!Array.isArray(v);
-    const snap=()=>isHost
-      ?[{peer:peer.id,sameTab:true,kind:'viewer',presence:mine},...[...list].map(([id,p])=>({peer:id,sameTab:false,kind:'viewer',presence:p}))]
-      :latest.map(x=>({peer:String(x.peer),sameTab:x.peer===peer.id,kind:'viewer',presence:isObj(x.presence)?x.presence:{}}));
+    const hs=[];let hostV=null,players={},mine={},ok=false;
+    const snap=()=>{
+      const arr=[];
+      if(isObj(hostV))arr.push({peer:'host',sameTab:isHost,kind:'viewer',presence:{...hostV,role:'h'}});
+      for(const [id,v] of Object.entries(players).slice(0,200))if(isObj(v))arr.push({peer:id,sameTab:id===myId,kind:'viewer',presence:{...v,role:'p'}});
+      return arr;
+    };
     const fire=()=>{const arr=snap();hs.forEach(h=>h({peers:arr}));};
-    const broadcast=()=>{const arr=snap().map(({peer,presence})=>({peer,presence}));conns.forEach(c=>{if(c.open)c.send({t:'peers',arr});});};
+    const write=()=>{const v={...mine};delete v.role;Object.keys(v).forEach(k=>v[k]===undefined&&delete v[k]);
+      if(isHost)v.live=true;v.at=firebase.database.ServerValue.TIMESTAMP;return ref.set(v);};
     const api={
-      presence:async p=>{mine={...mine,...p};if(isHost){fire();broadcast();}else if(hostConn&&hostConn.open)hostConn.send({t:'p',pres:mine});},
+      presence:async p=>{mine={...mine,...p};await write().catch(()=>{});},
       onPeers:h=>{hs.push(h);setTimeout(fire,0);return()=>{};},
     };
-    const finish=(ok,err)=>{if(done)return;done=true;ok?resolve(api):(closed=true,peer.destroy(),reject(err));};
-    function connect(){
-      if(closed)return;
-      const c=peer.connect(PFX+code,{reliable:true});
-      c.on('open',()=>{hostConn=c;c.send({t:'p',pres:mine});finish(true);});
-      c.on('data',d=>{if(isObj(d)&&d.t==='peers'&&Array.isArray(d.arr)&&d.arr.length<=200){latest=d.arr;fire();}});
-      c.on('close',()=>{hostConn=null;if(done)setTimeout(connect,3000);});   // 선생님 화면이 새로고침되면 다시 붙어요
-    }
-    peer.on('open',()=>isHost?finish(true):connect());
-    peer.on('disconnected',()=>{if(!closed)peer.reconnect();});
-    peer.on('error',e=>{
-      if(e.type==='peer-unavailable'){if(!done)finish(false,'nohost');else setTimeout(connect,3000);return;}
-      if(!done)finish(false,e.type==='unavailable-id'?'taken':'net');
-    });
-    if(isHost)peer.on('connection',c=>{
-      c.on('open',()=>{conns.set(c.peer,c);broadcast();});
-      c.on('data',d=>{if(isObj(d)&&d.t==='p'&&isObj(d.pres)&&JSON.stringify(d.pres).length<2000){list.set(c.peer,d.pres);fire();broadcast();}});
-      c.on('close',()=>{conns.delete(c.peer);list.delete(c.peer);fire();broadcast();});
-    });
-    setTimeout(()=>finish(false,'net'),15000);
+    const fail=e=>{if(!ok){ok=true;clearTimeout(timer);reject(e);}};
+    const timer=setTimeout(()=>fail('net'),15000);
+    // 학생은 선생님 방이 열려 있을 때만 들어가요
+    const ready=isHost?Promise.resolve():base.child('host/live').once('value').then(s=>{if(s.val()!==true)throw 'nohost';});
+    ready.then(()=>{
+      base.child('host').on('value',s=>{hostV=s.val();fire();});
+      base.child('players').on('value',s=>{players=s.val()||{};fire();});
+      // 연결될 때마다(처음·재연결) 내 기록을 다시 적고, 창이 닫히면 정리되게 예약해요
+      fbDb.ref('.info/connected').on('value',s=>{
+        if(s.val()!==true)return;
+        if(isHost)ref.onDisconnect().update({live:false});else ref.onDisconnect().remove();
+        if(Object.keys(mine).length||isHost)write().catch(()=>{});
+        if(!ok){ok=true;clearTimeout(timer);resolve(api);}
+      });
+    },e=>fail(e==='nohost'?'nohost':'net'));
   });
 }
-roomNS=window.Peer?{}:null;roomReady=true;
+roomNS=fbDb?{}:null;roomReady=true;
 const JOIN_ERR={nohost:'선생님 방을 찾지 못했어요. 선생님이 먼저 같은 방 코드로 방을 만들었는지 확인해 주세요.',
-  taken:'이 방 코드가 아직 사용 중이에요. 화면을 새로고침했다면 10초 뒤 다시 눌러 보고, 계속 안 되면 다른 코드를 써 주세요.',net:'연결하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.'};
+  net:'연결하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.'};
 
 function pushPresence(){
   if(!game||ROLE!=='p'||!S)return;
@@ -738,13 +741,13 @@ function boardHTML(list,waiting){
 function onPeers(ch){
   peersNow=ch.peers;
   if(ROLE==='p'){
-    const host=peersNow.find(p=>!p.sameTab&&p.kind==='viewer'&&p.presence&&p.presence.role==='h'&&typeof p.presence.race==='string'&&/^[a-z0-9]{1,16}$/.test(p.presence.race));
+    const host=peersNow.find(p=>!p.sameTab&&p.kind==='viewer'&&p.presence&&p.presence.role==='h'&&p.presence.live===true&&typeof p.presence.race==='string'&&/^[a-z0-9]{1,16}$/.test(p.presence.race));
     if(host&&S&&S.race&&host.presence.race!==S.race.id)startRace(host.presence.race,clampGoal(host.presence.goal));
     renderBoard();renderGhosts();if(!$('modalVeil').hidden&&$('modal').dataset.kind)refreshRaceModal();
   }else renderHost();
 }
 async function joinRoom(code){
-  game=await peerRoom(code,ROLE==='h');
+  game=await fbRoom(code,ROLE==='h');
   game.onPeers(onPeers,e=>{$('boardMeta').textContent='연결이 끊겼어요';});
 }
 function renderBoard(){
@@ -831,7 +834,7 @@ let pickedFace=FACES[0], MODE='solo';
 function raceNote(){
   const n=$('raceNote');if(MODE!=='race')return;
   if(!roomReady)n.textContent='실시간 연결을 확인하는 중…';
-  else if(!roomNS)n.textContent='연결 도구를 불러오지 못했어요. 인터넷에 연결된 상태에서 이 파일을 다시 열어 주세요.';
+  else if(!roomNS)n.textContent=FIREBASE_DB_URL?'연결 도구를 불러오지 못했어요. 인터넷에 연결된 상태에서 이 페이지를 다시 열어 주세요.':'아직 실시간 서버 주소가 설정되지 않았어요. (선생님: Firebase 데이터베이스 주소를 넣어야 해요)';
   else n.textContent=ROLE==='h'?'선생님 화면이 방이 돼요. 경주가 끝날 때까지 이 화면을 닫지 마세요.':'선생님이 먼저 방을 만든 뒤, 같은 방 코드를 넣어요.';
   $('startBtn').disabled=!roomNS;
 }
