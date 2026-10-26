@@ -1,0 +1,916 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>기체 부피 세계여행</title>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Gowun+Dodum&display=swap">
+<style>
+/* Layout: ZEP-style game shell. HUD bar on top, tile map (16x10) + guide dialog side by side on wide screens, stacked on phones. One committed night-UI look over a bright pixel world. */
+:root{
+  --deep:#0e1a2b;      /* page ground */
+  --panel:#18283f;     /* UI panels */
+  --line:#2c4466;      /* panel borders */
+  --paper:#fff7e3;     /* speech bubble */
+  --ink:#1d2a3a;       /* text on paper */
+  --fg:#eef3fb;        /* text on panels */
+  --muted:#9fb2cc;
+  --sun:#ffc93c;       /* accent: stars, stamps, primary buttons */
+  --mint:#3ad49b;      /* correct */
+  --coral:#ff6b5b;     /* wrong */
+  --sea:#2f6fb0;
+  --f-display:"Jua","Gowun Dodum","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  --f-body:"Gowun Dodum","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--deep);color:var(--fg);font-family:var(--f-body);font-size:16px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:12px;box-sizing:border-box}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+button{font-family:var(--f-display);cursor:pointer}
+button:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
+.app{max-width:1280px;margin:0 auto;display:flex;flex-direction:column;gap:12px;min-height:100%}
+
+/* HUD */
+.hud{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;background:var(--panel);border:2px solid var(--line);border-radius:14px;padding:8px 14px}
+.brand{font-family:var(--f-display);font-size:22px;color:var(--sun);letter-spacing:.5px;margin-right:auto;white-space:nowrap}
+.brand small{font-size:13px;color:var(--muted);margin-left:6px;font-family:var(--f-body)}
+.who{display:flex;align-items:center;gap:6px;font-family:var(--f-display);font-size:17px}
+.who .face{font-size:24px}
+.chip{font-family:var(--f-display);font-size:16px;background:var(--deep);border:2px solid var(--line);border-radius:999px;padding:3px 12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip b{color:var(--sun);font-weight:400}
+.stamps{display:flex;gap:4px}
+.stamp-slot{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:16px;background:var(--deep);border:2px dashed var(--line);filter:grayscale(1);opacity:.45}
+.stamp-slot.got{filter:none;opacity:1;border:2px solid var(--sun);background:#3a2f12}
+.stamp-slot.now{opacity:1;filter:none;border-style:solid;border-color:var(--sky,#5fb4ff)}
+.icon-btn{background:var(--deep);border:2px solid var(--line);color:var(--fg);border-radius:10px;font-size:16px;padding:4px 10px}
+
+/* Screens */
+.stage{flex:1;display:flex;flex-direction:column;gap:12px}
+.world{position:relative;background:var(--panel);border:2px solid var(--line);border-radius:16px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.world canvas{width:100%;display:block;border-radius:10px;image-rendering:pixelated}
+.world .cap{font-family:var(--f-display);font-size:20px;text-align:center;min-height:28px}
+.world .cap span{color:var(--sun)}
+
+.play{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(0,1fr);gap:12px;align-items:start}
+@media (max-width:960px){.play{grid-template-columns:minmax(0,1fr)}}
+
+.mapbox{background:var(--panel);border:2px solid var(--line);border-radius:16px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.maphead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.maphead h2{margin:0;font-family:var(--f-display);font-weight:400;font-size:24px}
+.maphead h2 .ic{margin-right:6px}
+.maphead .sub{color:var(--muted);font-size:14px}
+.map{position:relative;width:100%;aspect-ratio:16/10;max-width:100%;border-radius:10px;overflow:hidden;container-type:inline-size;border:3px solid #0a1220}
+.grid{position:absolute;inset:0;display:grid;grid-template-columns:repeat(16,1fr);grid-template-rows:repeat(10,1fr)}
+.tile{display:grid;place-items:center;font-size:calc(100cqw / 16 * .6);line-height:1;user-select:none}
+.tile.path{box-shadow:inset 0 0 0 1px rgba(0,0,0,.06)}
+.tile.stop{position:relative}
+.tile.stop .lm{width:86%;height:86%;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.75);border:2px solid rgba(0,0,0,.35);font-size:calc(100cqw / 16 * .52);transition:transform .2s}
+.tile.stop.locked .lm{filter:grayscale(.85);opacity:.7}
+.tile.stop.cur .lm{background:#fff;border-color:var(--sun);box-shadow:0 0 0 3px var(--sun);animation:pulse 1.2s ease-in-out infinite}
+.tile.stop .badge{position:absolute;right:-2%;top:-6%;font-size:calc(100cqw / 16 * .3)}
+@keyframes pulse{50%{transform:scale(1.1)}}
+.layer{position:absolute;inset:0;pointer-events:none}
+.avatar{position:absolute;width:6.25%;height:10%;display:grid;place-items:center;transition:left .17s linear,top .17s linear;z-index:3}
+.avatar .body{font-size:calc(100cqw / 16 * .78);line-height:1;animation:bob .5s ease-in-out infinite alternate;filter:drop-shadow(0 3px 0 rgba(0,0,0,.35))}
+.avatar.flip .body{transform:scaleX(-1)}
+.avatar .tag{position:absolute;top:-36%;left:50%;transform:translateX(-50%);white-space:nowrap;font-family:var(--f-display);font-size:max(11px,calc(100cqw / 16 * .24));background:rgba(14,26,43,.85);color:#fff;padding:1px 7px;border-radius:6px}
+@keyframes bob{to{translate:0 -8%}}
+.placelabel{position:absolute;transform:translate(-50%,0);white-space:nowrap;font-family:var(--f-display);font-size:max(11px,calc(100cqw / 16 * .26));background:var(--sun);color:#2a1d00;padding:2px 8px;border-radius:8px;z-index:4;box-shadow:0 2px 0 rgba(0,0,0,.35)}
+
+/* Dialog */
+.talk{background:var(--panel);border:2px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.npc{display:flex;align-items:center;gap:10px}
+.npc .face{font-size:38px;width:54px;height:54px;border-radius:14px;display:grid;place-items:center;background:var(--deep);border:2px solid var(--line)}
+.npc .nm{font-family:var(--f-display);font-size:18px}
+.npc .loc{color:var(--muted);font-size:14px}
+.bubble{background:var(--paper);color:var(--ink);border-radius:14px;padding:12px 14px;position:relative}
+.bubble::before{content:"";position:absolute;top:-9px;left:22px;border:9px solid transparent;border-top:0;border-bottom-color:var(--paper)}
+.scene{display:flex;align-items:center;gap:12px}
+.scene .pic{font-size:40px;min-width:92px;text-align:center;background:#ffe9b8;border-radius:12px;padding:6px 8px;letter-spacing:2px}
+.scene .no{font-size:12px;color:#7a6a4a;font-family:var(--f-display);letter-spacing:.5px}
+.qtext{font-family:var(--f-display);font-size:21px;line-height:1.4;text-wrap:balance;margin:2px 0 0}
+.choices{display:grid;gap:10px}
+.choice{display:flex;align-items:center;gap:10px;text-align:left;font-size:19px;color:var(--ink);background:#fff;border:3px solid #0a1220;border-radius:14px;padding:12px 14px;box-shadow:0 4px 0 #0a1220;transition:transform .08s}
+.choice:hover:not(:disabled){transform:translateY(-2px)}
+.choice:active:not(:disabled){transform:translateY(2px);box-shadow:0 2px 0 #0a1220}
+.choice .k{flex:none;width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--sun);color:#2a1d00;font-size:18px}
+.choice.wrong{background:#ffd9d4;border-color:var(--coral);color:#7d2219;box-shadow:none;animation:shake .35s}
+.choice.wrong .k{background:var(--coral);color:#fff}
+.choice.right{background:#d3f7e8;border-color:var(--mint);color:#0d5a3e}
+.choice.right .k{background:var(--mint);color:#fff}
+.choice:disabled{cursor:default}
+@keyframes shake{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+.fb{border-radius:12px;padding:10px 12px;font-size:16px;line-height:1.5}
+.fb.ok{background:rgba(58,212,155,.14);border:2px solid var(--mint)}
+.fb.no{background:rgba(255,107,91,.13);border:2px solid var(--coral)}
+.fb strong{font-family:var(--f-display);font-weight:400;font-size:19px;display:block}
+.go{font-size:20px;background:var(--sun);color:#2a1d00;border:3px solid #0a1220;border-radius:14px;padding:12px;box-shadow:0 4px 0 #0a1220}
+.go:active{transform:translateY(2px);box-shadow:0 2px 0 #0a1220}
+.hint{color:var(--muted);font-size:13px;text-align:center}
+
+/* Overlays */
+.veil{position:fixed;inset:0;background:rgba(6,12,22,.72);display:grid;place-items:center;z-index:20;padding:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));overflow:auto}
+.card{background:var(--panel);border:3px solid var(--sun);border-radius:20px;padding:22px;width:min(560px,100%);display:flex;flex-direction:column;gap:14px;box-shadow:0 8px 0 #050a12}
+.card h1,.card h2{margin:0;font-family:var(--f-display);font-weight:400;text-wrap:balance}
+.card h1{font-size:34px;color:var(--sun)}
+.card h2{font-size:28px;color:var(--sun)}
+.card p{margin:0;line-height:1.6;color:var(--fg)}
+.card label{font-family:var(--f-display);font-size:16px;color:var(--muted)}
+.card input{font:inherit;font-size:18px;padding:10px 12px;border-radius:10px;border:2px solid var(--line);background:var(--deep);color:var(--fg);width:100%}
+.faces{display:flex;flex-wrap:wrap;gap:8px}
+.faces button{font-size:30px;width:54px;height:54px;border-radius:12px;background:var(--deep);border:2px solid var(--line)}
+.faces button[aria-pressed="true"]{border-color:var(--sun);background:#3a2f12}
+.row{display:flex;flex-direction:column;gap:12px;margin-top:4px}
+.ghost{font-size:17px;background:transparent;color:var(--fg);border:2px solid var(--line);border-radius:14px;padding:12px 14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.route{display:flex;flex-wrap:wrap;gap:6px;font-size:14px;color:var(--muted)}
+.route span{background:var(--deep);border-radius:999px;padding:2px 10px}
+.bigstamp{align-self:center;width:170px;height:170px;border-radius:50%;border:6px double #d8443a;color:#d8443a;display:grid;place-items:center;text-align:center;font-family:var(--f-display);transform:rotate(-12deg);background:#fff7e3;animation:thump .45s cubic-bezier(.2,1.6,.4,1)}
+.bigstamp .i{font-size:54px;line-height:1}
+.bigstamp .n{font-size:22px}
+.bigstamp .d{font-size:12px;letter-spacing:1px}
+@keyframes thump{from{transform:rotate(-12deg) scale(2.2);opacity:0}}
+.stars{font-size:26px;text-align:center;letter-spacing:2px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.stats div{background:var(--deep);border-radius:10px;padding:6px;text-align:center;font-size:13px;color:var(--muted)}
+.stats div b{display:block;font-family:var(--f-display);font-weight:400;font-size:20px;color:var(--fg)}
+@media (max-width:480px){.stats{grid-template-columns:repeat(2,1fr)}}
+.review{max-height:240px;overflow:auto;display:flex;flex-direction:column;gap:6px;padding-right:4px}
+.review div{background:var(--deep);border-radius:10px;padding:8px 10px;font-size:14px;line-height:1.5}
+.review div em{font-style:normal;color:var(--mint)}
+/* Race mode */
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--deep);padding:4px;border-radius:12px}
+.tabs button,.roles button{font-size:16px;padding:9px;border-radius:9px;border:2px solid transparent;background:transparent;color:var(--muted)}
+.roles{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.roles button{background:var(--deep);border-color:var(--line)}
+.tabs button[aria-pressed="true"],.roles button[aria-pressed="true"]{background:var(--panel);color:var(--sun);border-color:var(--sun)}
+.card .note{font-size:14px;color:var(--muted)}
+.fields{display:flex;flex-direction:column;gap:10px}
+.side{display:flex;flex-direction:column;gap:12px;min-width:0}
+.board{background:var(--panel);border:2px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.board h3{margin:0;font-family:var(--f-display);font-weight:400;font-size:19px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.board h3 span{font-family:var(--f-body);font-size:13px;color:var(--muted)}
+.board ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.board li{display:grid;grid-template-columns:26px 30px minmax(0,1fr) auto;align-items:center;gap:8px;background:var(--deep);border-radius:10px;padding:6px 10px}
+.board li.me{outline:2px solid var(--sun)}
+.board .rk{font-family:var(--f-display);font-size:18px;text-align:center;color:var(--muted)}
+.board li.top .rk{color:var(--sun)}
+.board .fc{font-size:22px}
+.board .nm{font-family:var(--f-display);font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.board .bar{height:6px;border-radius:3px;background:var(--line);margin-top:4px;overflow:hidden}
+.board .bar i{display:block;height:100%;background:var(--mint)}
+.board .sc{font-size:13px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.board .sc b{display:block;font-family:var(--f-display);font-weight:400;font-size:15px;color:var(--fg)}
+.board .empty{color:var(--muted);font-size:14px;padding:4px 2px}
+.hostview{display:flex;flex-direction:column;gap:12px}
+.hostbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;background:var(--panel);border:2px solid var(--line);border-radius:16px;padding:12px 14px}
+.hostbar .code{font-family:var(--f-display);font-size:20px}
+.hostbar .code b{font-weight:400;color:var(--sun);font-size:30px;margin-left:6px;letter-spacing:2px}
+.hostbar label{display:flex;align-items:center;gap:6px;font-family:var(--f-display)}
+.hostbar select{font:inherit;font-size:16px;padding:6px 8px;border-radius:8px;background:var(--deep);color:var(--fg);border:2px solid var(--line)}
+.hostbar .go{padding:8px 18px;font-size:18px}
+.hostbar .st{color:var(--muted);margin-left:auto}
+.hostgrid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:12px;align-items:start}
+@media (max-width:960px){.hostgrid{grid-template-columns:minmax(0,1fr)}}
+.buddy{position:absolute;width:6.25%;height:10%;display:grid;place-items:center;transition:left .3s,top .3s;z-index:2;opacity:.85}
+.buddy .body{font-size:calc(100cqw / 16 * .55);line-height:1}
+.buddy .tag{position:absolute;bottom:-26%;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:max(10px,calc(100cqw / 16 * .2));background:rgba(255,255,255,.88);color:var(--ink);padding:0 5px;border-radius:5px}
+.myrank{font-family:var(--f-display);font-size:44px;color:var(--sun);text-align:center;line-height:1.1}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:600px){.brand small{display:none}.qtext{font-size:19px}.choice{font-size:17px}.scene .pic{font-size:32px;min-width:76px}}
+</style>
+
+<div class="app">
+  <header class="hud">
+    <div class="brand">기체 부피 세계여행<small>현상을 보고 맞히면 다음 여행지로!</small></div>
+    <div class="who"><span class="face" id="hudFace">🧒</span><span id="hudName">여행자</span></div>
+    <div class="chip">📍 <b id="hudProg">0</b> / 80</div>
+    <div class="chip">⭐ <b id="hudStar">0</b></div>
+    <div class="stamps" id="hudStamps" aria-label="여권 도장"></div>
+    <button class="icon-btn" id="soundBtn" aria-label="소리 켜기/끄기">🔊</button>
+  </header>
+
+  <main class="stage">
+    <section class="world" id="worldView">
+      <canvas id="worldCv" aria-label="세계 여행 지도"></canvas>
+      <div class="cap" id="worldCap">비행기를 타고 8개 나라, 80곳을 여행해요</div>
+    </section>
+
+    <section class="play" id="playView" hidden>
+      <div class="mapbox">
+        <div class="maphead">
+          <h2><span class="ic" id="cIcon"></span><span id="cName"></span></h2>
+          <span class="sub" id="cSub"></span>
+        </div>
+        <div class="map" id="map">
+          <div class="grid" id="grid"></div>
+          <div class="layer" id="layer">
+            <div class="placelabel" id="placeLabel"></div>
+            <div class="avatar" id="avatar"><span class="tag" id="avTag"></span><span class="body" id="avBody">🧒</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="side" id="sideSlot">
+      <div class="talk">
+        <div class="npc">
+          <div class="face" id="npcFace">🐯</div>
+          <div><div class="nm" id="npcName"></div><div class="loc" id="npcLoc"></div></div>
+        </div>
+        <div class="bubble">
+          <div class="scene">
+            <div><div class="pic" id="qPic"></div></div>
+            <div><div class="no" id="qNo"></div><p class="qtext" id="qText"></p></div>
+          </div>
+        </div>
+        <div class="choices" id="choices"></div>
+        <div class="fb" id="fb" hidden></div>
+        <button class="go" id="goBtn" hidden>다음 장소로 이동 ▶</button>
+        <div class="hint">키보드: 1 · 2 로 고르고, Enter 로 이동</div>
+      </div>
+      <section class="board" id="board" hidden>
+        <h3>실시간 순위 <span id="boardMeta"></span></h3>
+        <ol id="boardList"></ol>
+      </section>
+      </div>
+    </section>
+
+    <section class="hostview" id="hostView" hidden>
+      <div class="hostbar">
+        <div class="code">방 코드<b id="hbCode"></b></div>
+        <label for="goalSel">문제 수
+          <select id="goalSel">
+            <option value="10">10문제 (1개 나라)</option><option value="20">20문제 (2개 나라)</option>
+            <option value="30">30문제 (3개 나라)</option><option value="40">40문제 (4개 나라)</option>
+            <option value="50">50문제 (5개 나라)</option><option value="60">60문제 (6개 나라)</option>
+            <option value="70">70문제 (7개 나라)</option><option value="80" selected>80문제 (8개 나라)</option>
+          </select>
+        </label>
+        <button class="go" id="raceStart">경주 시작 🏁</button>
+        <span class="st" id="hbState"></span>
+      </div>
+      <div class="hostgrid"><div id="hostWorldSlot"></div><div id="hostBoardSlot"></div></div>
+    </section>
+  </main>
+</div>
+
+<div class="veil" id="startVeil">
+  <div class="card">
+    <h1>기체 부피 세계여행</h1>
+    <p>현상 카드를 보고 두 답 중 하나를 골라요. 맞히면 다음 여행지로 걸어가고, 한 나라의 10곳을 모두 지나면 여권 도장을 받고 비행기로 다음 나라에 가요.</p>
+    <div class="route"><span>🐯 대한민국</span><span>🗻 일본</span><span>🐼 중국</span><span>🐘 인도</span><span>🔺 이집트</span><span>🗼 프랑스</span><span>🗽 미국</span><span>🦜 브라질</span></div>
+    <div class="tabs">
+      <button id="tabSolo" aria-pressed="true">혼자 여행</button>
+      <button id="tabRace" aria-pressed="false">친구들과 경쟁</button>
+    </div>
+    <div class="fields" id="raceFields" hidden>
+      <div class="roles">
+        <button id="roleP" aria-pressed="true">학생으로 참가</button>
+        <button id="roleH" aria-pressed="false">선생님 (진행)</button>
+      </div>
+      <label for="codeIn">방 코드 (숫자나 영어)</label>
+      <input id="codeIn" maxlength="12" placeholder="예: 501" autocomplete="off">
+      <p class="note" id="raceNote">같은 방 코드를 넣은 친구들과 실시간으로 순위를 겨뤄요.</p>
+    </div>
+    <div class="fields" id="playerFields">
+      <label for="nameIn">여행자 이름</label>
+      <input id="nameIn" maxlength="10" placeholder="이름을 적어요" autocomplete="off">
+      <label>캐릭터 고르기</label>
+      <div class="faces" id="faces"></div>
+    </div>
+    <div class="row">
+      <button class="go" id="startBtn">여행 시작 ✈️</button>
+      <button class="ghost" id="resumeBtn" hidden>이어서 하기</button>
+    </div>
+  </div>
+</div>
+
+<div class="veil" id="modalVeil" hidden><div class="card" id="modal"></div></div>
+
+<script>
+/* ---------- 80 현상 카드 (문제사냥카드 순서 그대로) ---------- */
+// [문제, 그림, 유형, 원인]  유형: up/down=부피 묻기, T+/T-/P+/P-=이유 묻기, c=직접 보기 [문제,그림,'c',정답,오답,설명]
+const RAW = [
+ ['압력이 높아지면 기체의 부피는 어떻게 되나요?','👇🎈','down','P+'],
+ ['압력이 낮아지면 기체의 부피는 어떻게 되나요?','☁️🎈','up','P-'],
+ ['온도가 낮아지면 기체의 부피는 어떻게 되나요?','❄️🎈','down','T-'],
+ ['온도가 높아지면 기체의 부피는 어떻게 되나요?','🔥🎈','up','T+'],
+ ['기체의 부피를 줄이려면 온도를 어떻게 해야 하나요?','🌡️🎈','c','온도를 낮춘다','온도를 높인다','온도가 낮아지면 기체의 부피가 줄어들어요.'],
+ ['기체의 부피를 늘리려면 온도를 어떻게 해야 하나요?','🌡️🎈','c','온도를 높인다','온도를 낮춘다','온도가 높아지면 기체의 부피가 늘어나요.'],
+ ['기체의 부피를 줄이려면 압력을 어떻게 해야 하나요?','✋🎈','c','압력을 높인다','압력을 낮춘다','압력이 높아지면 기체의 부피가 줄어들어요.'],
+ ['기체의 부피를 늘리려면 압력을 어떻게 해야 하나요?','✋🎈','c','압력을 낮춘다','압력을 높인다','압력이 낮아지면 기체의 부피가 늘어나요.'],
+ ['공기주머니가 있는 신발을 신고 높이 뛰었다가 착지했을 때, 공기주머니의 부피가 줄어드는 이유는?','👟⬇️','P+'],
+ ['찌그러진 탁구공을 뜨거운 물에 넣었을 때 탁구공이 펴지는 이유는?','🏓♨️','T+'],
+ ['빈 페트병을 냉장고에 넣었을 때 페트병이 찌그러지는 이유는?','🧴🧊','T-'],
+ ['열기구 속 공기를 가열했을 때 열기구의 풍선 부분이 부풀어 오르는 이유는?','🎈🔥','T+'],
+ ['높은 산 위에서 과자 봉지가 부풀어 오르는 이유는?','⛰️🥨','P-'],
+ ['호핑볼 위에 앉았을 때 호핑볼의 부피가 줄어드는 이유는?','🟠🧒','P+'],
+ ['공기주머니가 있는 신발을 신고 높이 뛰었다가 착지하면 공기주머니의 부피는 어떻게 되나요?','👟⬇️','down','P+'],
+ ['찌그러진 탁구공을 뜨거운 물에 넣으면 탁구공 속 기체의 부피는 어떻게 되나요?','🏓♨️','up','T+'],
+ ['빈 페트병을 냉장고에 넣어두면 페트병 속 기체의 부피는 어떻게 되나요?','🧴🧊','down','T-'],
+ ['열기구 속 공기를 가열하면 열기구의 풍선 부분의 부피는 어떻게 되나요?','🎈🔥','up','T+'],
+ ['높은 산 위에서 과자 봉지 속 기체의 부피는 어떻게 되나요?','⛰️🥨','up','P-'],
+ ['호핑볼 위에 앉으면 호핑볼 속 기체의 부피는 어떻게 되나요?','🟠🧒','down','P+'],
+ ['기체가 든 운동 기구를 발로 밟으면 운동 기구가 찌그러지는 이유는?','🦶🟣','P+'],
+ ['기체가 든 운동 기구를 발로 밟으면 운동 기구 속 기체의 부피는 어떻게 되나요?','🦶🟣','down','P+'],
+ ['하늘을 날고 있는 비행기 안에서 공기베개가 부풀어 오르는 이유는?','✈️💤','P-'],
+ ['하늘을 날고 있는 비행기 안에서 공기베개의 부피는 어떻게 되나요?','✈️💤','up','P-'],
+ ['여름에 자동차가 도로를 달릴 때 타이어의 부피가 늘어나는 이유는?','☀️🚗','T+'],
+ ['여름에 자동차가 도로를 달릴 때 타이어의 부피는 어떻게 되나요?','☀️🚗','up','T+'],
+ ['겨울에 풍선을 추운 곳으로 가지고 나갈 때 풍선의 부피가 줄어드는 이유는?','⛄🎈','T-'],
+ ['겨울에 풍선을 추운 곳으로 가지고 나가면 풍선의 부피는 어떻게 되나요?','⛄🎈','down','T-'],
+ ['햇볕이 내리쬐는 곳에 물놀이 공을 두었을 때 공의 부피가 늘어나는 이유는?','☀️🏖️','T+'],
+ ['햇볕이 내리쬐는 곳에 물놀이 공을 두었을 때 공의 부피는 어떻게 되나요?','☀️🏖️','up','T+'],
+ ['배구공을 손으로 세게 쳤을 때 배구공의 부피는 어떻게 되나요?','🏐✋','down','P+'],
+ ['배구공을 손으로 세게 쳤을 때 배구공의 부피가 줄어드는 이유는?','🏐✋','P+'],
+ ['공기 침대에 누워 있다가 일어났을 때 공기 침대의 부피는 어떻게 되나요?','🛏️🧍','up','P-'],
+ ['공기 침대에 누워 있다가 일어났을 때 공기 침대의 부피가 늘어나는 이유는?','🛏️🧍','P-'],
+ ['과자 봉지를 얼음 상자에 넣어두었을 때 과자 봉지의 부피는 어떻게 되나요?','🥨🧊','down','T-'],
+ ['과자 봉지를 얼음 상자에 넣어두었을 때 과자 봉지의 부피가 줄어드는 이유는?','🥨🧊','T-'],
+ ['친구와 공기 옷을 입고 서로 부딪쳤을 때 공기 옷의 부피는 어떻게 되나요?','🧥💥','down','P+'],
+ ['친구와 공기 옷을 입고 서로 부딪쳤을 때 공기 옷의 부피가 줄어드는 이유는?','🧥💥','P+'],
+ ['자전거에 사람이 올라탔을 때 타이어의 부피는 어떻게 되나요?','🚲🧍','down','P+'],
+ ['자전거에 사람이 올라탔을 때 타이어의 부피가 줄어드는 이유는?','🚲🧍','P+'],
+ ['깊은 물속에서 내뿜은 공기 방울은 물 표면으로 갈수록 부피가 어떻게 되나요?','🤿⬆️','up','P-'],
+ ['깊은 물속에서 내뿜은 공기 방울이 물 표면으로 갈수록 커지는 이유는?','🤿⬆️','P-'],
+ ['뜨거웠던 음식이 식으면 음식을 포장한 랩은 부풀어 오르나요, 쭈그러드나요?','🍲⏳','c','쭈그러든다','부풀어 오른다','음식이 식으면 랩 안 기체의 온도가 낮아져 부피가 줄어들어요. 그래서 랩이 쭈그러들어요.'],
+ ['뜨거웠던 음식이 식었을 때 음식을 포장한 랩이 쭈그러드는 이유는?','🍲⏳','T-'],
+ ['깊은 물속에서 빈 페트병의 부피는 어떻게 되나요?','🌊🧴','down','P+'],
+ ['깊은 물속에서 빈 페트병의 부피가 줄어드는 이유는?','🌊🧴','P+'],
+ ['여름에 자전거를 타고 난 뒤 타이어의 부피가 늘어나는 이유는?','☀️🚲','T+'],
+ ['여름에 자전거를 타고 난 뒤 타이어의 부피는 어떻게 되나요?','☀️🚲','up','T+'],
+ ['냉장고에 있던 찌그러진 페트병을 냉장고 밖에 꺼내두면 페트병의 부피는 어떻게 되나요?','🧊➡️🧴','up','T+'],
+ ['냉장고에 있던 찌그러진 페트병을 냉장고 밖에 꺼내두었을 때 페트병의 부피가 늘어나는 이유는?','🧊➡️🧴','T+'],
+ ['여름철 자동차 안에 과자 봉지를 넣어두면 과자 봉지의 부피는 어떻게 되나요?','🚗🥨','up','T+'],
+ ['여름철 자동차 안에 과자 봉지를 넣어두었을 때 과자 봉지가 부풀어 오르는 이유는?','🚗🥨','T+'],
+ ['고무풍선을 씌운 삼각 플라스크를 뜨거운 물에 넣으면 고무풍선이 어떻게 되나요?','⚗️♨️','c','부풀어 오른다','오그라든다','뜨거운 물에서 플라스크 속 기체의 온도가 높아져 부피가 늘어나요. 그래서 풍선이 부풀어요.'],
+ ['고무풍선을 씌운 삼각 플라스크를 뜨거운 물에 넣었을 때 고무풍선이 부풀어 오르는 이유는?','⚗️♨️','T+'],
+ ['고무풍선을 씌운 삼각 플라스크를 얼음물에 넣으면 고무풍선이 어떻게 되나요?','⚗️🧊','c','오그라든다','부풀어 오른다','얼음물에서 플라스크 속 기체의 온도가 낮아져 부피가 줄어들어요. 그래서 풍선이 오그라들어요.'],
+ ['고무풍선을 씌운 삼각 플라스크를 얼음물에 넣었을 때 고무풍선이 오그라드는 이유는?','⚗️🧊','T-'],
+ ['고무풍선이 높은 하늘 위로 올라가면 풍선의 부피는 어떻게 되나요?','🎈☁️','up','P-'],
+ ['고무풍선이 높은 하늘 위로 올라가면 풍선의 부피가 늘어나는 이유는?','🎈☁️','P-'],
+ ['빈칸에 들어갈 말은? “기체의 부피는 ○○(이)나 압력에 따라 달라질 수 있다.”','📝❓','c','온도','무게','기체의 부피는 온도나 압력에 따라 달라질 수 있어요.'],
+ ['빈칸에 들어갈 말은? “기체의 부피는 온도나 ○○에 따라 달라질 수 있다.”','📝❓','c','압력','색깔','기체의 부피는 온도나 압력에 따라 달라질 수 있어요.'],
+ ['추운 겨울 밖에서 들고 다니던 풍선을 따뜻한 집으로 가지고 오면 풍선의 부피는 어떻게 되나요?','⛄➡️🏠','up','T+'],
+ ['추운 겨울 밖에서 들고 다니던 풍선을 따뜻한 집으로 가지고 왔을 때 풍선이 커지는 이유는?','⛄➡️🏠','T+'],
+ ['축구공을 세게 찼을 때 축구공의 부피는 어떻게 되나요?','⚽🦶','down','P+'],
+ ['축구공을 세게 찼을 때 축구공의 부피가 줄어드는 이유는?','⚽🦶','P+'],
+ ['입구를 막은 주사기에 고무풍선을 넣고 피스톤을 누르면 고무풍선이 어떻게 되나요?','💉👇','c','작아진다','커진다','피스톤을 누르면 주사기 속 압력이 높아져 풍선의 부피가 줄어들어요.'],
+ ['입구를 막은 주사기에 고무풍선을 넣고 피스톤을 눌렀을 때 고무풍선이 작아지는 이유는?','💉👇','P+'],
+ ['입구를 막은 주사기에 고무풍선을 넣고 피스톤을 눌렀다 떼면 고무풍선이 어떻게 되나요?','💉👆','c','커진다','작아진다','피스톤에서 손을 떼면 압력이 낮아져 풍선의 부피가 다시 늘어나요.'],
+ ['입구를 막은 주사기에 고무풍선을 넣고 피스톤을 눌렀다 떼었을 때 고무풍선이 커지는 이유는?','💉👆','P-'],
+ ['마시멜로를 진공 용기에 넣고 공기를 빼내면 마시멜로의 부피는 어떻게 되나요?','🍡🥫','up','P-'],
+ ['마시멜로를 진공 용기에 넣고 공기를 빼낼수록 마시멜로가 부풀어 오르는 이유는?','🍡🥫','P-'],
+ ['고무풍선을 냉장고에 넣으면 고무풍선의 부피는 어떻게 되나요?','🎈🧊','down','T-'],
+ ['고무풍선을 냉장고에 넣었을 때 고무풍선의 부피가 줄어드는 이유는?','🎈🧊','T-'],
+ ['고무풍선을 손으로 누르면 고무풍선의 부피는 어떻게 되나요?','🎈✋','down','P+'],
+ ['고무풍선을 손으로 누르면 고무풍선의 부피가 줄어드는 이유는?','🎈✋','P+'],
+ ['깊은 물속으로 잠수할수록 공기 방울의 부피는 어떻게 되나요?','🤿⬇️','down','P+'],
+ ['깊은 물속으로 잠수할수록 공기 방울의 크기가 작아지는 이유는?','🤿⬇️','P+'],
+ ['고무풍선을 씌운 삼각 플라스크를 물이 든 수조에 넣었더니 풍선이 부풀어 올랐다. 뜨거운 물과 얼음물 중 어떤 물이었을까?','⚗️⬆️','c','뜨거운 물','얼음물','풍선이 부풀었다는 건 기체의 부피가 늘어났다는 뜻이에요. 온도가 높아지는 뜨거운 물이에요.'],
+ ['고무풍선을 씌운 삼각 플라스크를 물이 든 수조에 넣었더니 풍선이 오그라들었다. 뜨거운 물과 얼음물 중 어떤 물이었을까?','⚗️⬇️','c','얼음물','뜨거운 물','풍선이 오그라들었다는 건 기체의 부피가 줄었다는 뜻이에요. 온도가 낮아지는 얼음물이에요.'],
+ ['찌그러진 페트병을 뜨거운 물에 넣었을 때 페트병이 펴지는 이유는?','🧴♨️','T+'],
+ ['찌그러진 페트병을 뜨거운 물에 넣으면 페트병 속 기체의 부피는 어떻게 되나요?','🧴♨️','up','T+'],
+];
+const REASON={'T+':'온도가 높아졌기 때문이다','T-':'온도가 낮아졌기 때문이다','P+':'압력이 높아졌기 때문이다','P-':'압력이 낮아졌기 때문이다'};
+const SWAP={'T+':'P-','P-':'T+','T-':'P+','P+':'T-'};
+const WHY={'T+':'온도가 높아지면(따뜻해지면) 기체의 부피가 늘어나요.','T-':'온도가 낮아지면(차가워지면) 기체의 부피가 줄어들어요.',
+ 'P+':'누르는 힘이나 물의 무게처럼 기체에 가해지는 압력이 높아지면 부피가 줄어들어요.','P-':'높은 곳이나 공기를 빼낸 곳처럼 주변 압력이 낮아지면 기체의 부피가 늘어나요.'};
+const Q = RAW.map(([q,pic,t,...r])=>{
+  if(t==='up'||t==='down'){const up='부피가 늘어난다',dn='부피가 줄어든다';return {q,pic,a:t==='up'?up:dn,b:t==='up'?dn:up,x:WHY[r[0]]};}
+  if(t==='c') return {q,pic,a:r[0],b:r[1],x:r[2]};
+  return {q,pic,a:REASON[t],b:REASON[SWAP[t]],x:WHY[t]+(t[0]==='T'?' 압력이 아니라 온도가 바뀐 현상이에요.':' 온도가 아니라 압력이 바뀐 현상이에요.')};
+});
+
+/* ---------- 8개 나라 × 10곳 ---------- */
+const C = [
+ {n:'대한민국',ic:'🐯',ll:[127,37],npc:['🐯','호랑이 가이드'],g:['#86cf6e','#7cc466'],p:'#ead7a4',d:['🌳','🌲','🌸','🏠','🌾','🪨'],
+  s:[['서울 경복궁','🏯'],['N서울타워','🗼'],['수원 화성','🧱'],['대전 과학관','🔭'],['전주 한옥마을','🏘️'],['안동 하회마을','🎭'],['경주 불국사','🛕'],['부산 해운대','🏖️'],['여수 밤바다','🌃'],['제주 한라산','🌋']]},
+ {n:'일본',ic:'🗻',ll:[139,36],npc:['🦊','여우 가이드'],g:['#a3d98c','#98cf81'],p:'#e9dcc0',d:['🌸','🌸','🎋','🌲','🏠','⛩️'],
+  s:[['삿포로 눈축제','⛄'],['도쿄 타워','🗼'],['아사쿠사','🏮'],['하코네 온천','♨️'],['후지산','🗻'],['나고야 성','🏯'],['교토 금각사','⛩️'],['나라 사슴공원','🦌'],['오사카 성','🏯'],['히로시마','🕊️']]},
+ {n:'중국',ic:'🐼',ll:[110,34],npc:['🐼','판다 가이드'],g:['#8cc97a','#82bf70'],p:'#e6cf9b',d:['🎋','🌳','🏮','⛰️','🌾'],
+  s:[['베이징 자금성','🏯'],['만리장성','🧱'],['하얼빈 얼음축제','🧊'],['시안 병마용','🗿'],['청두 판다기지','🐼'],['장자제 협곡','⛰️'],['구이린 리강','🛶'],['항저우 시후','🌸'],['상하이 와이탄','🌆'],['홍콩 빅토리아항','⛴️']]},
+ {n:'인도',ic:'🐘',ll:[78,22],npc:['🐘','코끼리 가이드'],g:['#c6d36c','#bcc962'],p:'#ecc98e',d:['🌴','🌳','🐄','🌼','🏠'],
+  s:[['델리 붉은 성','🏰'],['아그라 타지마할','🕌'],['자이푸르 핑크시티','🐘'],['바라나시 갠지스강','🪔'],['다르질링 차밭','🍵'],['히말라야 전망대','🏔️'],['뭄바이 인도문','🚪'],['고아 해변','🏝️'],['케랄라 수로','🛶'],['벵갈루루 우주센터','🚀']]},
+ {n:'이집트',ic:'🔺',ll:[31,27],npc:['🐪','낙타 가이드'],g:['#f0d48a','#e8ca7c'],p:'#d9a75e',d:['🌵','🌴','🐪','🪨','🔺'],
+  s:[['기자 피라미드','🔺'],['스핑크스','🦁'],['카이로 박물관','🏺'],['나일강 돛단배','⛵'],['룩소르 신전','🏛️'],['왕가의 계곡','⚱️'],['아스완 댐','🌊'],['아부심벨 신전','🗿'],['사하라 사막','🐪'],['홍해 산호초','🐠']]},
+ {n:'프랑스',ic:'🗼',ll:[2,47],npc:['🐓','수탉 가이드'],g:['#9bd47e','#91ca74'],p:'#e3dccb',d:['🌳','🌻','🍇','🏡','🌷'],
+  s:[['파리 에펠탑','🗼'],['루브르 박물관','🖼️'],['개선문','🏛️'],['베르사유 궁전','👑'],['몽생미셸','🏰'],['루아르 고성','🏰'],['리옹 빛축제','💡'],['몽블랑','🏔️'],['프로방스 라벤더밭','💜'],['니스 해변','🏖️']]},
+ {n:'미국',ic:'🗽',ll:[-98,39],npc:['🦅','독수리 가이드'],g:['#93cc78','#88c26e'],p:'#d8d2c4',d:['🌲','🌳','🌽','🏠','🌵'],
+  s:[['자유의 여신상','🗽'],['타임스스퀘어','🌃'],['워싱턴 D.C.','🏛️'],['나이아가라 폭포','💦'],['시카고','🏙️'],['옐로스톤','♨️'],['그랜드캐니언','🏜️'],['라스베이거스','🎰'],['금문교','🌉'],['하와이 화산','🌋']]},
+ {n:'브라질',ic:'🦜',ll:[-50,-12],npc:['🦜','앵무새 가이드'],g:['#62c062','#58b558'],p:'#e2c48d',d:['🌴','🌳','🌿','🦋','🌺'],
+  s:[['아마존 열대우림','🌴'],['마나우스 강','🐊'],['브라질리아','🏛️'],['판타나우 습지','🦜'],['이과수 폭포','💦'],['살바도르','🥁'],['상파울루','🏙️'],['코파카바나 해변','🏖️'],['슈가로프 산','🚡'],['리우 예수상','⛰️']]},
+];
+const FACES=['🧒','👧','🧑‍🚀','🐻','🐰','🐱','🐶','🤖'];
+
+/* ---------- state ---------- */
+const KEY='gasTrip-v1';
+let S=null;                       // {name,face,idx,res:[0|1|2 ×80],goal,race}  1=한 번에 정답, 2=다시 풀어 정답
+let tries=0, order=[0,1], busy=false, sound=true, epoch=0;
+const goal=()=>S&&S.goal?S.goal:80;
+const $=id=>document.getElementById(id);
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+function load(){try{const v=JSON.parse(localStorage.getItem(KEY));if(v&&Array.isArray(v.res)&&v.res.length===80)return v}catch(e){}return null}
+const stars=()=>S?S.res.filter(r=>r===1).length:0;
+
+/* ---------- sound ---------- */
+let actx=null;
+function beep(notes){
+  if(!sound)return;
+  try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    let t=actx.currentTime;
+    for(const [f,d] of notes){const o=actx.createOscillator(),g=actx.createGain();o.type='square';o.frequency.value=f;
+      g.gain.setValueAtTime(.06,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g).connect(actx.destination);o.start(t);o.stop(t+d);t+=d*.8;}
+  }catch(e){}
+}
+const SND={ok:[[660,.1],[880,.16]],no:[[220,.18],[180,.22]],step:[[520,.04]],stamp:[[392,.1],[523,.1],[659,.1],[784,.25]]};
+
+/* ---------- HUD ---------- */
+function hud(){
+  $('hudFace').textContent=S?S.face:'🧒';
+  $('hudName').textContent=S?S.name:'여행자';
+  $('hudProg').textContent=S?S.idx:0;
+  $('hudProg').nextSibling.textContent=' / '+goal();
+  $('hudStar').textContent=stars();
+  const ci=S?Math.floor(S.idx/10):-1;
+  $('hudStamps').innerHTML=C.slice(0,goal()/10).map((c,i)=>`<span class="stamp-slot ${S&&S.idx>=(i+1)*10?'got':(i===ci?'now':'')}" title="${c.n}">${c.ic}</span>`).join('');
+  pushPresence();
+}
+
+/* ---------- world map (pixel) ---------- */
+const LAND=[
+ [[-168,66],[-160,71],[-140,70],[-125,72],[-95,72],[-80,74],[-62,66],[-55,52],[-66,45],[-70,42],[-76,35],[-81,31],[-80,25],[-84,30],[-90,29],[-97,26],[-97,22],[-92,18],[-87,21],[-88,15],[-83,9],[-79,8],[-85,11],[-92,15],[-105,20],[-110,24],[-115,30],[-117,33],[-122,37],[-124,42],[-124,48],[-130,55],[-140,60],[-152,58],[-165,60]],
+ [[-50,60],[-42,60],[-20,70],[-18,78],[-40,82],[-65,80],[-55,70]],
+ [[-80,8],[-72,12],[-62,11],[-50,0],[-35,-5],[-39,-15],[-48,-26],[-58,-35],[-65,-42],[-68,-54],[-75,-50],[-73,-40],[-71,-30],[-70,-18],[-76,-14],[-81,-5],[-80,0],[-78,7]],
+ [[-9,37],[-9,43],[-2,44],[-4,48],[2,51],[8,54],[10,57],[5,62],[15,69],[28,71],[40,67],[60,69],[70,73],[90,76],[110,77],[130,72],[150,71],[170,70],[180,66],[180,64],[170,60],[160,55],[156,51],[143,59],[137,54],[140,47],[132,43],[129,40],[129,35],[126,35],[126,38],[124,40],[121,40],[118,39],[122,37],[120,33],[122,30],[120,25],[115,22],[109,21],[106,19],[109,12],[105,9],[100,13],[101,4],[104,1],[98,8],[98,16],[94,17],[92,22],[88,22],[80,15],[77,8],[73,17],[72,21],[67,25],[61,25],[57,26],[56,24],[59,22],[52,16],[44,12],[43,15],[39,22],[35,28],[33,31],[35,33],[36,36],[30,36],[27,37],[26,40],[24,40],[22,37],[19,41],[13,45],[17,41],[16,38],[12,42],[8,44],[3,43],[0,39],[-5,36]],
+ [[-17,21],[-10,30],[-6,35],[10,37],[11,33],[20,31],[32,31],[35,25],[38,18],[43,12],[51,12],[48,4],[40,-5],[40,-15],[35,-24],[33,-28],[27,-34],[19,-35],[17,-29],[12,-17],[13,-8],[9,-1],[9,4],[4,6],[-8,4],[-13,8],[-17,15]],
+ [[114,-22],[122,-18],[130,-12],[137,-12],[142,-11],[146,-19],[153,-26],[150,-37],[141,-38],[135,-35],[128,-32],[115,-34]],
+ [[130,31],[132,34],[135,34],[140,35],[141,38],[142,42],[145,44],[141,45],[140,41],[136,37],[133,35]],
+ [[-5,50],[1,51],[0,53],[-3,56],[-5,58],[-6,55],[-3,54],[-5,52]],
+ [[95,5],[106,-6],[104,-5],[97,2]],[[109,1],[117,7],[119,1],[116,-4],[110,-3]],[[44,-25],[50,-15],[49,-12],[43,-22]],
+ [[172,-41],[175,-37],[178,-38],[174,-41],[167,-46],[170,-46]],[[-24,64],[-14,66],[-14,64],[-22,63]],
+];
+const LT=75,LB=-58,W0=192,H0=Math.round(W0*(LT-LB)/360);
+const proj=(lon,lat,W,H)=>[(lon+180)/360*W,(LT-lat)/(LT-LB)*H];
+let pixMap=null;
+function buildPixMap(){
+  const m=document.createElement('canvas');m.width=W0;m.height=H0;const x=m.getContext('2d');
+  x.fillStyle='#000';
+  for(const poly of LAND){x.beginPath();poly.forEach(([lo,la],i)=>{const [px,py]=proj(lo,la,W0,H0);i?x.lineTo(px,py):x.moveTo(px,py)});x.closePath();x.fill();}
+  const src=x.getImageData(0,0,W0,H0),out=x.createImageData(W0,H0);
+  const land=(i,j)=>i>=0&&j>=0&&i<W0&&j<H0&&src.data[(j*W0+i)*4+3]>110;
+  for(let j=0;j<H0;j++)for(let i=0;i<W0;i++){
+    const k=(j*W0+i)*4,L=land(i,j),chk=(i+j)%2;
+    let c;
+    if(L){const coast=!land(i+1,j)||!land(i-1,j)||!land(i,j+1)||!land(i,j-1);
+      c=coast?[226,206,140]:(j<10||j>H0-6?[236,244,250]:chk?[124,201,107]:[115,191,99]);}
+    else{const shallow=land(i+1,j)||land(i-1,j)||land(i,j+1)||land(i,j-1);c=shallow?[74,145,206]:chk?[47,111,176]:[44,105,168];}
+    out.data.set([...c,255],k);
+  }
+  x.putImageData(out,0,0);pixMap=m;
+}
+function drawWorld(plane,doneTo,markers){
+  const cv=$('worldCv'),dpr=Math.min(window.devicePixelRatio||1,2),cw=cv.clientWidth||800;
+  const W=Math.round(cw*dpr),H=Math.round(W*H0/W0);
+  if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;cv.style.height=(H/dpr)+'px';}
+  const x=cv.getContext('2d');x.imageSmoothingEnabled=false;x.drawImage(pixMap,0,0,W,H);
+  const pts=C.map(c=>proj(c.ll[0],c.ll[1],W,H));
+  x.lineWidth=3*dpr;x.lineCap='round';
+  for(let i=0;i<pts.length-1;i++){
+    const [a,b]=[pts[i],pts[i+1]],ctrl=arcCtrl(a,b);
+    x.setLineDash(i<doneTo?[]:[6*dpr,7*dpr]);x.strokeStyle=i<doneTo?'#ffc93c':'rgba(255,255,255,.75)';
+    x.beginPath();x.moveTo(...a);x.quadraticCurveTo(...ctrl,...b);x.stroke();
+  }
+  x.setLineDash([]);
+  const fs=Math.max(12*dpr,W/50);
+  const LBL=[[-1.6,-1.25,'right'],[1.1,0,'left'],[0,1.35,'center']]; // 대한민국: 왼쪽 위, 일본: 오른쪽, 나머지: 아래
+  pts.forEach(([px,py],i)=>{
+    const got=S&&S.idx>=(i+1)*10;
+    x.fillStyle=got?'#ffc93c':'#fff7e3';x.strokeStyle='#0e1a2b';x.lineWidth=2.5*dpr;
+    x.beginPath();x.arc(px,py,fs*.7,0,7);x.fill();x.stroke();
+    x.font=`${fs*.9}px "Segoe UI Emoji","Apple Color Emoji",sans-serif`;x.textAlign='center';x.textBaseline='middle';
+    x.fillText(C[i].ic,px,py+fs*.05);
+    const [lx,ly,al]=LBL[Math.min(i,2)];
+    x.font=`${fs*.72}px ${getComputedStyle(document.body).getPropertyValue('--f-display')}`;x.textAlign=al;
+    x.lineWidth=4*dpr;x.strokeStyle='#0e1a2b';x.strokeText(C[i].n,px+lx*fs*.6,py+ly*fs);x.fillStyle='#fff';x.fillText(C[i].n,px+lx*fs*.6,py+ly*fs);
+  });
+  if(markers){ // 진행자 화면: 참가자 캐릭터를 지금 있는 나라 둘레에 그려요
+    const by={};markers.forEach(m=>(by[m.ci]=by[m.ci]||[]).push(m));
+    x.textAlign='center';x.textBaseline='middle';
+    for(const ci in by){
+      const [px,py]=pts[ci],list=by[ci];
+      list.forEach((m,k)=>{
+        const a=-Math.PI/2+k*2*Math.PI/Math.max(list.length,6),r=fs*(1.7+Math.floor(k/6)*.9);
+        const mx=px+Math.cos(a)*r,my=py+Math.sin(a)*r;
+        x.fillStyle='rgba(14,26,43,.75)';x.beginPath();x.arc(mx,my,fs*.62,0,7);x.fill();
+        x.font=`${fs*.85}px "Segoe UI Emoji","Apple Color Emoji",sans-serif`;x.fillStyle='#fff';x.fillText(m.face,mx,my+fs*.05);
+      });
+    }
+  }
+  if(plane){
+    x.save();x.translate(plane.x,plane.y);x.rotate(plane.a+Math.PI/4);
+    x.font=`${fs*1.5}px "Segoe UI Emoji","Apple Color Emoji",sans-serif`;x.textAlign='center';x.textBaseline='middle';x.fillText('✈️',0,0);x.restore();
+  }
+}
+function arcCtrl(a,b){const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2,d=Math.hypot(b[0]-a[0],b[1]-a[1]);return [mx,my-d*.28];}
+function fly(from,to,done){
+  showWorld();
+  const cv=$('worldCv');
+  const cap=$('worldCap');
+  cap.innerHTML=from<0?`첫 여행지 <span>${C[to].ic} ${C[to].n}</span>(으)로 출발!`:`<span>${C[to].ic} ${C[to].n}</span>(으)로 날아가는 중…`;
+  if(from<0){drawWorld(null,to);setTimeout(done,1600);return;}
+  const dur=matchMedia('(prefers-reduced-motion: reduce)').matches?200:2600,t0=performance.now();
+  (function frame(now){
+    const W=cv.width,H=cv.height,a=proj(...C[from].ll,W,H),b=proj(...C[to].ll,W,H),c=arcCtrl(a,b);
+    let t=Math.min(1,(now-t0)/dur);const e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+    const q=(p0,p1,p2,u)=>(1-u)*(1-u)*p0+2*(1-u)*u*p1+u*u*p2;
+    const px=q(a[0],c[0],b[0],e),py=q(a[1],c[1],b[1],e);
+    const dx=2*(1-e)*(c[0]-a[0])+2*e*(b[0]-c[0]),dy=2*(1-e)*(c[1]-a[1])+2*e*(b[1]-c[1]);
+    drawWorld({x:px,y:py,a:Math.atan2(dy,dx)},from);
+    if(t<1)requestAnimationFrame(frame);else{cap.innerHTML=`<span>${C[to].ic} ${C[to].n}</span> 도착!`;beep(SND.ok);setTimeout(done,900);}
+  })(t0);
+}
+function showWorld(){$('worldView').hidden=false;$('playView').hidden=true;}
+
+/* ---------- country tile map ---------- */
+const CORNERS=[[1,8],[6,8],[6,5],[2,5],[2,1],[9,1],[9,7],[12,7],[12,2],[14,2],[14,8]];
+function pathFor(ci){
+  const t=[];for(let i=0;i<CORNERS.length-1;i++){let [x,y]=CORNERS[i];const [bx,by]=CORNERS[i+1];
+    while(x!==bx||y!==by){t.push([x,y]);x+=Math.sign(bx-x);y+=Math.sign(by-y);}}
+  t.push(CORNERS[CORNERS.length-1]);
+  return ci%2?t.map(([x,y])=>[15-x,y]):t;     // 46 tiles, stops every 5
+}
+function rng(seed){return()=>((seed=Math.imul(seed^seed>>>15,seed|1)+0x6D2B79F5)>>>0)/4294967296;}
+function buildCountry(ci){
+  const c=C[ci],path=pathFor(ci),onPath=new Map(path.map((p,i)=>[p.join(),i])),r=rng(ci*977+13);
+  let h='';
+  for(let y=0;y<10;y++)for(let x=0;x<16;x++){
+    const pi=onPath.get(x+','+y);
+    if(pi!==undefined){
+      if(pi%5===0){const s=pi/5;h+=`<div class="tile path stop" data-s="${s}" style="background:${c.p}"><span class="lm">${c.s[s][1]}</span><span class="badge"></span></div>`;}
+      else h+=`<div class="tile path" style="background:${c.p}"></div>`;
+    }else{
+      const deco=r()<.24?c.d[Math.floor(r()*c.d.length)]:'';
+      h+=`<div class="tile" style="background:${c.g[(x+y)%2]}">${deco}</div>`;
+    }
+  }
+  $('grid').innerHTML=h;
+  $('cIcon').textContent=c.ic;$('cName').textContent=c.n;
+  $('npcFace').textContent=c.npc[0];$('npcName').textContent=c.npc[1];
+  $('avBody').textContent=S.face;$('avTag').textContent=S.name;
+}
+function placeAvatar([x,y],dir){
+  const av=$('avatar');av.style.left=(x/16*100)+'%';av.style.top=(y/10*100)+'%';
+  if(dir)av.classList.toggle('flip',dir>0);
+}
+function refreshStops(){
+  const ci=Math.floor(S.idx/10),cur=S.idx%10;
+  document.querySelectorAll('.tile.stop').forEach(t=>{
+    const s=+t.dataset.s,qi=ci*10+s,r=S.res[qi];
+    t.classList.toggle('cur',s===cur&&S.idx<goal());t.classList.toggle('locked',s>cur);
+    t.querySelector('.badge').textContent=r===1?'⭐':r===2?'✔️':'';
+  });
+  renderGhosts();
+  const c=C[ci],sub=Math.min(cur,9);
+  const [x,y]=pathFor(ci)[sub*5],pl=$('placeLabel');
+  pl.textContent='📍 '+c.s[sub][0];pl.style.left=((x+.5)/16*100)+'%';
+  pl.style.top=y>=5?((y-1.05)/10*100)+'%':((y+1.1)/10*100)+'%';
+  $('cSub').textContent=`${cur+1>10?10:cur+1} / 10 곳 · ⭐ ${S.res.slice(ci*10,ci*10+10).filter(v=>v===1).length}`;
+}
+function enterCountry(){
+  const ci=Math.floor(S.idx/10);
+  $('worldView').hidden=true;$('playView').hidden=false;
+  buildCountry(ci);placeAvatar(pathFor(ci)[(S.idx%10)*5]);refreshStops();hud();ask();
+}
+
+/* ---------- quiz ---------- */
+function ask(){
+  const q=Q[S.idx],ci=Math.floor(S.idx/10),s=S.idx%10;
+  tries=0;busy=false;order=Math.random()<.5?[0,1]:[1,0];
+  $('npcLoc').textContent=`📍 ${C[ci].s[s][1]} ${C[ci].s[s][0]}`;
+  $('qPic').textContent=q.pic;$('qNo').textContent=`현상 카드 No.${S.idx+1}`;$('qText').textContent=q.q;
+  const opts=[q.a,q.b];
+  $('choices').innerHTML=order.map((o,i)=>`<button class="choice" id="ch${i}" data-o="${o}"><span class="k">${i+1}</span><span>${opts[o]}</span></button>`).join('');
+  $('choices').querySelectorAll('.choice').forEach(b=>b.onclick=()=>choose(+b.dataset.o,b));
+  $('fb').hidden=true;$('goBtn').hidden=true;
+}
+function choose(o,btn){
+  if(busy||btn.disabled)return;
+  const q=Q[S.idx];
+  if(o===0){
+    busy=true;S.res[S.idx]=tries===0?1:2;save();
+    btn.classList.add('right');$('choices').querySelectorAll('.choice').forEach(b=>b.disabled=true);
+    $('fb').className='fb ok';$('fb').innerHTML=`<strong>${tries===0?'정답! ⭐ 획득':'정답!'}</strong>${q.x}`;$('fb').hidden=false;
+    const last=S.idx%10===9;
+    $('goBtn').textContent=S.idx===goal()-1?'도착! 결과 보기 🏁':last?'여권 도장 받기 🛂':'다음 장소로 이동 ▶';
+    $('goBtn').hidden=false;$('goBtn').focus({preventScroll:true});
+    hud();refreshStops();beep(SND.ok);
+  }else{
+    tries++;btn.classList.add('wrong');btn.disabled=true;
+    $('fb').className='fb no';$('fb').innerHTML=`<strong>아쉬워요! 다시 생각해 봐요</strong>${q.x}`;$('fb').hidden=false;
+    beep(SND.no);
+  }
+}
+function next(){
+  if($('goBtn').hidden)return;
+  $('goBtn').hidden=true;
+  const ci=Math.floor(S.idx/10),s=S.idx%10;
+  if(s===9){S.idx++;markDone();save();hud();stampModal(ci);return;}
+  const path=pathFor(ci);let i=s*5;const end=i+5,my=epoch;
+  (function step(){
+    if(my!==epoch)return;
+    i++;const prev=path[i-1],p=path[i];placeAvatar(p,p[0]-prev[0]);beep(SND.step);
+    if(i<end)setTimeout(step,170);else{S.idx++;save();hud();refreshStops();setTimeout(ask,150);}
+  })();
+}
+
+/* ---------- modals ---------- */
+function modal(html){$('modal').innerHTML=html;$('modal').dataset.kind='';$('modalVeil').hidden=false;}
+function closeModal(){$('modalVeil').hidden=true;}
+function stampModal(ci){
+  const st=S.res.slice(ci*10,ci*10+10).filter(v=>v===1).length,c=C[ci];
+  beep(SND.stamp);
+  const lastOne=(ci+1)*10>=goal();
+  modal(`<h2>${c.n} 여행 완료!</h2>
+   <div class="bigstamp"><div><div class="i">${c.ic}</div><div class="n">${c.n}</div><div class="d">PASSPORT · ${ci+1}/8</div></div></div>
+   <div class="stars" aria-label="별 ${st}개">${'⭐'.repeat(st)}${'☆'.repeat(10-st)}</div>
+   <p style="text-align:center">10곳 중 <b>${st}곳</b>을 한 번에 맞혔어요.</p>
+   <button class="go" id="mNext">${lastOne?'여행 결과 보기 🏁':`${C[ci+1].ic} ${C[ci+1].n}(으)로 비행 ✈️`}</button>`);
+  $('mNext').onclick=()=>{closeModal();if(lastOne)finish();else fly(ci,ci+1,enterCountry);};
+  $('mNext').focus();
+}
+function finish(){
+  if(S.race){raceFinish();return;}
+  showWorld();drawWorld(null,8);$('worldCap').innerHTML='<span>세계일주 성공!</span> 8개 나라 80곳을 모두 여행했어요';
+  const st=stars(),miss=S.res.map((r,i)=>r===2?i:-1).filter(i=>i>=0);
+  modal(`<h2>🏁 ${S.name}의 세계일주 완주!</h2>
+   <p>80개의 현상 카드를 모두 풀고 8개 나라 여권 도장을 모았어요.</p>
+   <div class="stats">${C.map((c,i)=>`<div>${c.ic} ${c.n}<b>⭐ ${S.res.slice(i*10,i*10+10).filter(v=>v===1).length}</b></div>`).join('')}</div>
+   <p style="text-align:center;font-family:var(--f-display);font-size:22px">한 번에 맞힌 문제 <span style="color:var(--sun)">${st}</span> / 80</p>
+   ${miss.length?`<label>다시 보면 좋은 현상 카드 (${miss.length}개)</label><div class="review">${miss.map(i=>`<div>No.${i+1} ${Q[i].q}<br><em>→ ${Q[i].a}</em></div>`).join('')}</div>`:'<p style="text-align:center">모든 문제를 한 번에 맞혔어요! 완벽한 기체 박사예요.</p>'}
+   <div class="row"><button class="go" id="mAgain">처음부터 다시 여행</button></div>`);
+  $('mAgain').onclick=()=>{closeModal();try{localStorage.removeItem(KEY)}catch(e){}S=null;hud();drawWorld(null,0);openStart();};
+}
+
+/* ---------- race (같이 경쟁) ----------
+   room 기능의 presence만 사용: 각자 {진행 상황}을 올리고 같은 방 코드의 모두가 실시간으로 받아요.
+   진행자(선생님)의 presence에 담긴 race id가 바뀌면 학생 화면이 처음부터 동시에 출발해요. */
+let roomNS=null, roomReady=false, game=null, ROLE='p', peersNow=[];
+const H={code:'',race:null,goal:80};          // 진행자 상태
+const HKEY='gasTrip-host-v1';
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num=v=>Number.isFinite(v)?v:0;
+const clampGoal=g=>Math.min(80,Math.max(10,Math.round(num(g)/10)*10||80));
+const fmt=ms=>{const s=Math.round(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
+const cleanCode=v=>String(v).toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,12);
+
+/* 계정 없이 쓰는 교실용 연결: 선생님 브라우저가 방(허브)이 되고, 학생 브라우저가 PeerJS(WebRTC)로 직접 붙어요.
+   학생은 자기 진행 상황을 선생님께 보내고, 선생님 화면이 모두의 목록을 학생들에게 다시 나눠 줘요. */
+const PFX='gasvol-';
+function peerRoom(code,isHost){
+  return new Promise((resolve,reject)=>{
+    const hs=[],list=new Map(),conns=new Map();
+    let mine={},latest=[],hostConn=null,done=false,closed=false;
+    const peer=new Peer(isHost?PFX+code:undefined,{debug:0});
+    const isObj=v=>v&&typeof v==='object'&&!Array.isArray(v);
+    const snap=()=>isHost
+      ?[{peer:peer.id,sameTab:true,kind:'viewer',presence:mine},...[...list].map(([id,p])=>({peer:id,sameTab:false,kind:'viewer',presence:p}))]
+      :latest.map(x=>({peer:String(x.peer),sameTab:x.peer===peer.id,kind:'viewer',presence:isObj(x.presence)?x.presence:{}}));
+    const fire=()=>{const arr=snap();hs.forEach(h=>h({peers:arr}));};
+    const broadcast=()=>{const arr=snap().map(({peer,presence})=>({peer,presence}));conns.forEach(c=>{if(c.open)c.send({t:'peers',arr});});};
+    const api={
+      presence:async p=>{mine={...mine,...p};if(isHost){fire();broadcast();}else if(hostConn&&hostConn.open)hostConn.send({t:'p',pres:mine});},
+      onPeers:h=>{hs.push(h);setTimeout(fire,0);return()=>{};},
+    };
+    const finish=(ok,err)=>{if(done)return;done=true;ok?resolve(api):(closed=true,peer.destroy(),reject(err));};
+    function connect(){
+      if(closed)return;
+      const c=peer.connect(PFX+code,{reliable:true});
+      c.on('open',()=>{hostConn=c;c.send({t:'p',pres:mine});finish(true);});
+      c.on('data',d=>{if(isObj(d)&&d.t==='peers'&&Array.isArray(d.arr)&&d.arr.length<=200){latest=d.arr;fire();}});
+      c.on('close',()=>{hostConn=null;if(done)setTimeout(connect,3000);});   // 선생님 화면이 새로고침되면 다시 붙어요
+    }
+    peer.on('open',()=>isHost?finish(true):connect());
+    peer.on('disconnected',()=>{if(!closed)peer.reconnect();});
+    peer.on('error',e=>{
+      if(e.type==='peer-unavailable'){if(!done)finish(false,'nohost');else setTimeout(connect,3000);return;}
+      if(!done)finish(false,e.type==='unavailable-id'?'taken':'net');
+    });
+    if(isHost)peer.on('connection',c=>{
+      c.on('open',()=>{conns.set(c.peer,c);broadcast();});
+      c.on('data',d=>{if(isObj(d)&&d.t==='p'&&isObj(d.pres)&&JSON.stringify(d.pres).length<2000){list.set(c.peer,d.pres);fire();broadcast();}});
+      c.on('close',()=>{conns.delete(c.peer);list.delete(c.peer);fire();broadcast();});
+    });
+    setTimeout(()=>finish(false,'net'),15000);
+  });
+}
+roomNS=window.Peer?{}:null;roomReady=true;
+const JOIN_ERR={nohost:'선생님 방을 찾지 못했어요. 선생님이 먼저 같은 방 코드로 방을 만들었는지 확인해 주세요.',
+  taken:'이 방 코드가 아직 사용 중이에요. 화면을 새로고침했다면 10초 뒤 다시 눌러 보고, 계속 안 되면 다른 코드를 써 주세요.',net:'연결하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.'};
+
+function pushPresence(){
+  if(!game||ROLE!=='p'||!S)return;
+  game.presence({role:'p',nick:S.name,face:S.face,idx:S.idx,stars:stars(),goal:goal(),race:S.race?S.race.id:null,done:S.race&&S.race.doneMs!=null?S.race.doneMs:null}).catch(()=>{});
+}
+function markDone(){
+  if(S.race&&S.race.id&&S.idx>=goal()&&S.race.doneMs==null)S.race.doneMs=Date.now()-S.race.start;
+}
+function playersOf(raceId){
+  return peersNow.filter(p=>p.kind==='viewer'&&p.presence&&p.presence.role==='p'&&(raceId===undefined||p.presence.race===raceId))
+    .map(p=>{const q=p.presence;return {peer:p.peer,me:p.sameTab,nick:String(q.nick||'여행자').slice(0,10),face:String(q.face||'🧒').slice(0,8),
+      idx:Math.min(80,Math.max(0,num(q.idx))),stars:num(q.stars),goal:clampGoal(q.goal),done:Number.isFinite(q.done)?q.done:null};})
+    .sort((a,b)=>(a.done!=null)!==(b.done!=null)?(a.done!=null?-1:1):a.done!=null?a.done-b.done:(b.idx-a.idx)||(b.stars-a.stars));
+}
+function boardHTML(list,waiting){
+  if(!list.length)return `<li class="empty" style="display:block">${waiting?'아직 들어온 학생이 없어요. 방 코드를 알려 주세요.':'함께 달리는 친구를 기다리는 중…'}</li>`;
+  return list.map((p,i)=>{
+    const g=p.goal,ci=Math.min(Math.floor(p.idx/10),C.length-1);
+    const right=waiting?'<b>대기 중</b>':p.done!=null?`<b>🏁 ${fmt(p.done)}</b>⭐ ${p.stars}`:`<b>${p.idx} / ${g}</b>${C[ci].ic} ⭐ ${p.stars}`;
+    return `<li class="${p.me?'me':''} ${i<3&&!waiting?'top':''}"><span class="rk">${waiting?'·':i+1}</span><span class="fc">${esc(p.face)}</span>
+      <div style="min-width:0"><div class="nm">${esc(p.nick)}${p.me?' (나)':''}</div><div class="bar"><i style="width:${waiting?0:p.idx/g*100}%"></i></div></div>
+      <span class="sc">${right}</span></li>`;
+  }).join('');
+}
+function onPeers(ch){
+  peersNow=ch.peers;
+  if(ROLE==='p'){
+    const host=peersNow.find(p=>!p.sameTab&&p.kind==='viewer'&&p.presence&&p.presence.role==='h'&&typeof p.presence.race==='string'&&/^[a-z0-9]{1,16}$/.test(p.presence.race));
+    if(host&&S&&S.race&&host.presence.race!==S.race.id)startRace(host.presence.race,clampGoal(host.presence.goal));
+    renderBoard();renderGhosts();if(!$('modalVeil').hidden&&$('modal').dataset.kind)refreshRaceModal();
+  }else renderHost();
+}
+async function joinRoom(code){
+  game=await peerRoom(code,ROLE==='h');
+  game.onPeers(onPeers,e=>{$('boardMeta').textContent='연결이 끊겼어요';});
+}
+function renderBoard(){
+  if(!S||!S.race){$('board').hidden=true;return;}
+  $('board').hidden=false;
+  const list=playersOf(S.race.id||null);
+  $('boardMeta').textContent=`방 ${S.race.code} · ${list.length}명`;
+  $('boardList').innerHTML=boardHTML(list,!S.race.id);
+}
+function renderGhosts(){
+  document.querySelectorAll('#layer .buddy').forEach(g=>g.remove());
+  if(!S||!S.race||!S.race.id||$('playView').hidden)return;
+  const ci=Math.floor(S.idx/10),path=pathFor(ci),seen={};
+  playersOf(S.race.id).filter(p=>!p.me&&p.done==null&&Math.floor(p.idx/10)===ci).forEach(p=>{
+    const s=p.idx%10,k=seen[s]=(seen[s]||0)+1,[x,y]=path[s*5];
+    const g=document.createElement('div');g.className='buddy';
+    g.style.left=((x+.18*((k%3)-1))/16*100)+'%';g.style.top=((y-.28-.18*Math.floor(k/3))/10*100)+'%';
+    g.innerHTML='<span class="body"></span><span class="tag"></span>';
+    g.firstChild.textContent=p.face;g.lastChild.textContent=p.nick;
+    $('layer').appendChild(g);
+  });
+}
+function lobbyModal(){
+  modal(`<h2>방 ${esc(S.race.code)} 대기실</h2>
+    <p>선생님이 <b>경주 시작</b>을 누르면 모두 함께 출발해요. 이 화면을 켜 둔 채로 기다려요.</p>
+    <ol class="board" style="list-style:none" id="lobbyList"></ol>`);
+  $('modal').dataset.kind='lobby';refreshRaceModal();
+}
+function refreshRaceModal(){
+  const k=$('modal').dataset.kind;
+  if(k==='lobby'){$('lobbyList').innerHTML=boardHTML(playersOf(),true);}
+  if(k==='result'){
+    const list=playersOf(S.race.id),me=list.findIndex(p=>p.me);
+    $('myRank').textContent=me>=0?`${me+1}등`:'도착!';
+    $('resultList').innerHTML=boardHTML(list,false);
+  }
+}
+function startRace(id,g){
+  epoch++;
+  S.idx=0;S.res=Array(80).fill(0);S.goal=g;S.race.id=id;S.race.start=Date.now();S.race.doneMs=null;save();
+  closeModal();$('modal').dataset.kind='';$('startVeil').hidden=true;
+  hud();renderBoard();fly(-1,0,enterCountry);
+}
+function raceFinish(){
+  showWorld();drawWorld(null,goal()/10);
+  $('worldCap').innerHTML=`<span>도착!</span> ${goal()}문제를 모두 풀었어요`;
+  modal(`<h2>🏁 ${esc(S.name)}, 도착!</h2>
+    <div class="myrank" id="myRank"></div>
+    <p style="text-align:center">걸린 시간 <b>${fmt(S.race.doneMs||0)}</b> · 한 번에 맞힌 문제 ⭐ <b>${stars()}</b></p>
+    <ol class="board" style="list-style:none" id="resultList"></ol>
+    <p class="note" style="text-align:center">친구들이 도착하면 순위가 바로 바뀌어요. 선생님이 새 경주를 시작하면 자동으로 출발해요.</p>`);
+  $('modal').dataset.kind='result';refreshRaceModal();
+}
+
+/* 진행자 화면 */
+function renderHost(){
+  const list=playersOf(H.race||undefined);
+  const live=H.race?list:playersOf();
+  $('hbCode').textContent=H.code;
+  const done=live.filter(p=>p.done!=null).length;
+  $('hbState').textContent=H.race?`참가 ${live.length}명 · 도착 ${done}명`:`대기 중 ${live.length}명`;
+  $('boardList').innerHTML=boardHTML(live,!H.race);
+  $('boardMeta').textContent=H.race?`${H.goal}문제 경주`:'시작 전';
+  drawWorld(null,0,H.race?live.filter(p=>p.done==null).map(p=>({ci:Math.min(Math.floor(p.idx/10),C.length-1),face:p.face})):null);
+  $('worldCap').innerHTML=H.race?(done?`🏁 1등 <span>${esc(live[0].nick)}</span> · ${fmt(live[0].done)}`:'학생들이 여행 중이에요'):'학생들이 방 코드를 넣고 들어오면 아래에 이름이 보여요';
+}
+function hostPresence(){game&&game.presence({role:'h',race:H.race,goal:H.goal}).catch(()=>{});}
+function enterHost(){
+  $('startVeil').hidden=true;$('playView').hidden=true;$('worldView').hidden=false;$('hostView').hidden=false;
+  $('hostWorldSlot').appendChild($('worldView'));$('hostBoardSlot').appendChild($('board'));$('board').hidden=false;
+  document.querySelector('.who').hidden=true;document.querySelectorAll('.hud .chip').forEach(c=>c.hidden=true);$('hudStamps').hidden=true;
+  $('goalSel').value=String(H.goal);
+  $('raceStart').textContent=H.race?'새 경주 시작 🔁':'경주 시작 🏁';
+  hostPresence();renderHost();
+}
+$('raceStart').onclick=()=>{
+  H.goal=clampGoal(+$('goalSel').value);H.race=Date.now().toString(36);
+  try{localStorage.setItem(HKEY,JSON.stringify(H))}catch(e){}
+  $('raceStart').textContent='새 경주 시작 🔁';hostPresence();renderHost();beep(SND.stamp);
+};
+
+/* ---------- start ---------- */
+let pickedFace=FACES[0], MODE='solo';
+function raceNote(){
+  const n=$('raceNote');if(MODE!=='race')return;
+  if(!roomReady)n.textContent='실시간 연결을 확인하는 중…';
+  else if(!roomNS)n.textContent='연결 도구를 불러오지 못했어요. 인터넷에 연결된 상태에서 이 파일을 다시 열어 주세요.';
+  else n.textContent=ROLE==='h'?'선생님 화면이 방이 돼요. 경주가 끝날 때까지 이 화면을 닫지 마세요.':'선생님이 먼저 방을 만든 뒤, 같은 방 코드를 넣어요.';
+  $('startBtn').disabled=!roomNS;
+}
+function setMode(m){
+  MODE=m;$('tabSolo').setAttribute('aria-pressed',m==='solo');$('tabRace').setAttribute('aria-pressed',m==='race');
+  $('raceFields').hidden=m!=='race';$('startBtn').disabled=false;setRole(ROLE);raceNote();
+}
+function setRole(r){
+  ROLE=r;$('roleP').setAttribute('aria-pressed',r==='p');$('roleH').setAttribute('aria-pressed',r==='h');raceNote();
+  $('playerFields').hidden=MODE==='race'&&r==='h';
+  $('startBtn').textContent=MODE==='solo'?'여행 시작 ✈️':r==='h'?'경주 방 만들기':'방 들어가기';
+}
+$('tabSolo').onclick=()=>setMode('solo');$('tabRace').onclick=()=>setMode('race');
+$('roleP').onclick=()=>setRole('p');$('roleH').onclick=()=>setRole('h');
+function openStart(){
+  const saved=load();
+  $('faces').innerHTML=FACES.map(f=>`<button aria-pressed="${f===pickedFace}" aria-label="캐릭터 ${f}">${f}</button>`).join('');
+  $('faces').querySelectorAll('button').forEach((b,i)=>b.onclick=()=>{pickedFace=FACES[i];$('faces').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));});
+  const rb=$('resumeBtn');
+  if(saved&&saved.idx<(saved.goal||80)){
+    rb.hidden=false;rb.textContent=saved.race?`이어서 하기 (방 ${saved.race.code} · ${saved.name})`:`이어서 하기 (${saved.name} · ${saved.idx}/80)`;
+    rb.onclick=async()=>{
+      if(saved.race){
+        if(!roomNS){setMode('race');return;}
+        S=saved;ROLE='p';
+        try{await joinRoom(saved.race.code);}catch(e){setMode('race');$('raceNote').textContent=JOIN_ERR[e]||JOIN_ERR.net;return;}
+        $('startVeil').hidden=true;renderBoard();
+        if(S.race.id)begin(true);else{hud();lobbyModal();}
+      }else{S=saved;$('startVeil').hidden=true;begin(true);}
+    };
+  }else rb.hidden=true;
+  setMode(MODE);$('startVeil').hidden=false;
+}
+$('startBtn').onclick=async()=>{
+  if(MODE==='solo'){
+    const name=($('nameIn').value.trim()||'여행자').slice(0,10);
+    S={name,face:pickedFace,idx:0,res:Array(80).fill(0),goal:80,race:null};save();
+    $('startVeil').hidden=true;begin(false);return;
+  }
+  const code=cleanCode($('codeIn').value);
+  if(!code){$('raceNote').textContent='방 코드를 숫자나 영어로 적어 주세요.';$('codeIn').focus();return;}
+  if(!roomNS)return;
+  $('startBtn').disabled=true;
+  $('raceNote').textContent='연결하는 중…';
+  try{await joinRoom(code);}catch(e){$('raceNote').textContent=JOIN_ERR[e]||JOIN_ERR.net;$('startBtn').disabled=false;return;}
+  if(ROLE==='h'){
+    let prev=null;try{prev=JSON.parse(localStorage.getItem(HKEY))}catch(e){}
+    H.code=code;H.race=prev&&prev.code===code?prev.race:null;H.goal=prev&&prev.code===code?clampGoal(prev.goal):80;
+    enterHost();return;
+  }
+  const name=($('nameIn').value.trim()||'여행자').slice(0,10);
+  S={name,face:pickedFace,idx:0,res:Array(80).fill(0),goal:80,race:{code,id:null,start:0,doneMs:null}};save();
+  $('startVeil').hidden=true;hud();renderBoard();lobbyModal();
+};
+$('nameIn').addEventListener('keydown',e=>{if(e.key==='Enter')$('startBtn').click();});
+$('codeIn').addEventListener('keydown',e=>{if(e.key==='Enter')$('startBtn').click();});
+function begin(resume){
+  hud();
+  const ci=Math.floor(S.idx/10);
+  if(resume&&S.idx%10!==0){enterCountry();return;}
+  fly(ci>0?ci-1:-1,ci,enterCountry);
+}
+$('goBtn').onclick=next;
+$('soundBtn').onclick=()=>{sound=!sound;$('soundBtn').textContent=sound?'🔊':'🔇';};
+document.addEventListener('keydown',e=>{
+  if(!$('modalVeil').hidden||!$('startVeil').hidden||$('playView').hidden)return;
+  if(e.key==='1'||e.key==='2'){const b=$('ch'+(+e.key-1));if(b)b.click();}
+  else if(e.key==='Enter'&&!$('goBtn').hidden&&document.activeElement!==$('goBtn')){e.preventDefault();next();}
+});
+window.addEventListener('resize',()=>{if(!$('hostView').hidden)renderHost();else if(!$('worldView').hidden)drawWorld(null,S?Math.floor(S.idx/10):0);});
+
+function boot(data){
+  buildPixMap();
+  if(data&&data.S&&!data.S.race&&data.S.goal){S=data.S;}
+  hud();drawWorld(null,S?Math.floor(S.idx/10):0);
+  if(S&&S.idx<goal()){$('startVeil').hidden=true;S.idx%10===0&&S.idx>0?fly(Math.floor(S.idx/10)-1,Math.floor(S.idx/10),enterCountry):enterCountry();}
+  else openStart();
+}
+window.claude?.hot?.snapshot?.(()=>({S}));
+document.fonts?.ready?.then?.(()=>{if(!$('worldView').hidden)drawWorld(null,S?Math.floor(S.idx/10):0);});
+window.claude?.hot?.ready ? window.claude.hot.ready(boot) : boot(window.claude?.hot?.data ?? {});
+</script>
